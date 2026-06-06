@@ -12,7 +12,7 @@ use rusqlite::{Connection, params_from_iter};
 use snb_core::context::{BotContext, PluginHelper};
 use snb_core::database::{ColumnType, DatabaseDriver, QueryResult, Row, Value};
 use snb_core::plugin::{PluginType, SnbPlugin, Version};
-use snb_macros::plugin;
+use snb_macros::{database, plugin};
 
 // -- SQLite database driver ---------------------------------------------------
 
@@ -141,6 +141,18 @@ impl DatabaseDriver for SqliteDatabase {
     }
 }
 
+// -- Driver registration ------------------------------------------------------
+
+/// Builds the SQLite driver. Runs during `register_all` (after `set_bot`), so it
+/// may read the plugin's data directory from the context.
+#[database]
+fn sqlite_driver() -> SqliteDatabase {
+    let db_path = PluginHelper::for_plugin("sqlite")
+        .data_dir()
+        .join("data.db");
+    SqliteDatabase::new("sqlite", db_path)
+}
+
 // -- Plugin -------------------------------------------------------------------
 
 #[plugin]
@@ -170,9 +182,7 @@ impl SnbPlugin for SqlitePlugin {
     fn on_load(&mut self, ctx: std::sync::Arc<dyn BotContext>) {
         snb_core::context::set_bot(ctx.clone());
         let p = PluginHelper::for_plugin(self.name());
-        let db_path = p.data_dir().join("data.db");
-        let db = SqliteDatabase::new(self.name(), db_path);
-        p.register_database(db);
+        p.register_all();
         p.info(&format!("v{} loaded!", self.version()));
     }
 

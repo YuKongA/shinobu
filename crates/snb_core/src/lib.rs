@@ -20,4 +20,5 @@ pub mod log_bridge;
 pub mod logger;
 pub mod message_handler;
 pub mod plugin;
+pub mod registry;
 pub mod session;

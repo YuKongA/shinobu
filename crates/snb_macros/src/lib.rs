@@ -1,9 +1,17 @@
 //! Proc macros for the Shinobu plugin framework.
 //!
-//! Provides the `#[plugin]` attribute macro that generates the FFI boilerplate
-//! required for dynamically loaded plugins (`create_plugin`, `destroy_plugin`,
-//! `plugin_abi` exports).
+//! - `#[plugin]` — generates the FFI boilerplate for dynamically loaded plugins
+//!   (`create_plugin`, `destroy_plugin`, `plugin_abi` exports).
+//! - `#[command(...)]`, `#[hook(...)]`, `#[message_handler(...)]`, `#[adapter]` —
+//!   generate the corresponding trait `impl` from an inherent `impl` block, so
+//!   authors only write the core method and declare metadata as attributes.
 
+mod adapter;
+mod command;
+mod common;
+mod database;
+mod handler;
+mod hook;
 mod plugin;
 
 use proc_macro::TokenStream;
@@ -19,4 +27,65 @@ use proc_macro::TokenStream;
 #[proc_macro_attribute]
 pub fn plugin(_attr: TokenStream, input: TokenStream) -> TokenStream {
     plugin::new_plugin(input)
+}
+
+/// Generate a `CommandHandler` from a free function and auto-register it.
+///
+/// ```ignore
+/// #[command(name = "echo", aliases = ["say"])]
+/// fn echo(ctx: &CommandContext) -> anyhow::Result<()> { ... }
+/// ```
+#[proc_macro_attribute]
+pub fn command(attr: TokenStream, input: TokenStream) -> TokenStream {
+    command::expand(attr.into(), input.into()).into()
+}
+
+/// Generate a `Hook` from a free function and auto-register it.
+///
+/// ```ignore
+/// #[hook(name = "log_hook", kind = HookType::All)]
+/// fn log_hook(event: &mut Event) -> anyhow::Result<()> { ... }
+/// ```
+#[proc_macro_attribute]
+pub fn hook(attr: TokenStream, input: TokenStream) -> TokenStream {
+    hook::expand(attr.into(), input.into()).into()
+}
+
+/// Generate a `MessageHandler` from a free function and auto-register it.
+///
+/// ```ignore
+/// #[message_handler(name = "echo_handler")]
+/// fn echo_handler(event: &Event) -> anyhow::Result<()> { ... }
+/// ```
+#[proc_macro_attribute]
+pub fn message_handler(attr: TokenStream, input: TokenStream) -> TokenStream {
+    handler::expand(attr.into(), input.into()).into()
+}
+
+/// Generate an `Adapter` from a free `async fn` and auto-register it.
+///
+/// The async body is driven by `run_async`, creating a tokio runtime inside
+/// the plugin's own cdylib.
+///
+/// ```ignore
+/// #[adapter]
+/// async fn demo(bot: Arc<dyn BotContext>) { ... }
+/// ```
+#[proc_macro_attribute]
+pub fn adapter(attr: TokenStream, input: TokenStream) -> TokenStream {
+    adapter::expand(attr.into(), input.into()).into()
+}
+
+/// Register a `DatabaseDriver` built by a free function and auto-register it.
+///
+/// ```ignore
+/// #[database]
+/// fn sqlite() -> SqliteDatabase {
+///     let path = PluginHelper::for_plugin("sqlite").data_dir().join("data.db");
+///     SqliteDatabase::new("sqlite", path)
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn database(attr: TokenStream, input: TokenStream) -> TokenStream {
+    database::expand(attr.into(), input.into()).into()
 }

@@ -151,10 +151,9 @@ pub trait BotContext: Send + Sync {
 /// methods.
 ///
 /// ```ignore
-/// let ctx = PluginHelper::for_plugin(self.name);
-/// ctx.register(EchoCommand);
-/// ctx.register_hook(LogHook);
-/// ctx.info("loaded!");
+/// let p = PluginHelper::for_plugin(self.name());
+/// p.register_all();   // registers everything declared via the macros
+/// p.info("loaded!");
 /// ```
 pub struct PluginHelper<'a> {
     name: &'a str,
@@ -166,30 +165,30 @@ impl<'a> PluginHelper<'a> {
         Self { name, bot: bot() }
     }
 
-    /// Register a command under this plugin's name.
-    pub fn register<C: CommandHandler + 'static>(&self, command: C) {
-        self.bot.register_command(self.name, Arc::new(command));
-    }
-
-    /// Register a hook under this plugin's name.
-    pub fn register_hook<H: Hook + 'static>(&self, hook: H) {
-        self.bot.register_hook(self.name, Arc::new(hook));
-    }
-
-    /// Register an adapter under this plugin's name.
-    pub fn register_adapter<A: Adapter + 'static>(&self, adapter: A) {
-        self.bot.register_adapter(self.name, Arc::new(adapter));
-    }
-
-    /// Register a message handler under this plugin's name.
-    pub fn register_message_handler<H: MessageHandler + 'static>(&self, handler: H) {
-        self.bot
-            .register_message_handler(self.name, Arc::new(handler));
-    }
-
-    /// Register a database driver under this plugin's name.
-    pub fn register_database<D: DatabaseDriver + 'static>(&self, db: D) {
-        self.bot.register_database(self.name, Arc::new(db));
+    /// Register every command, hook, message handler, adapter, and database
+    /// driver that was declared in this plugin via the `#[command]` / `#[hook]`
+    /// / `#[message_handler]` / `#[adapter]` / `#[database]` macros.
+    ///
+    /// Each macro emits an `inventory::submit!`; this walks those collections and
+    /// registers each item under the plugin's name. Since every plugin links its
+    /// own copy of `snb_core`, only this plugin's own declarations are seen.
+    pub fn register_all(&self) {
+        for reg in inventory::iter::<crate::registry::CommandRegistration> {
+            self.bot.register_command(self.name, (reg.factory)());
+        }
+        for reg in inventory::iter::<crate::registry::HookRegistration> {
+            self.bot.register_hook(self.name, (reg.factory)());
+        }
+        for reg in inventory::iter::<crate::registry::MessageHandlerRegistration> {
+            self.bot
+                .register_message_handler(self.name, (reg.factory)());
+        }
+        for reg in inventory::iter::<crate::registry::AdapterRegistration> {
+            self.bot.register_adapter(self.name, (reg.factory)());
+        }
+        for reg in inventory::iter::<crate::registry::DatabaseRegistration> {
+            self.bot.register_database(self.name, (reg.factory)());
+        }
     }
 
     /// Get a previously registered database driver by plugin name.
