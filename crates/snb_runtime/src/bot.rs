@@ -31,6 +31,7 @@ struct MessageHandlerEntry {
     handler: Arc<dyn MessageHandler>,
 }
 
+#[derive(Clone)]
 struct AdapterEntry {
     plugin_name: String,
     adapter: Arc<dyn Adapter>,
@@ -241,7 +242,7 @@ impl Bot {
     /// Each adapter receives a clone of `bot_ctx` so it can call
     /// [`BotContext::emit_event`] directly.
     pub fn run(&self, bot_ctx: Arc<dyn BotContext>) {
-        let adapters = self.adapters.lock().unwrap().drain(..).collect::<Vec<_>>();
+        let adapters = self.adapters.lock().unwrap().clone();
         for entry in adapters {
             let name = entry.plugin_name.clone();
             let ctx = bot_ctx.clone();
@@ -310,6 +311,24 @@ impl Bot {
         }
     }
 
+    fn send_to_adapter(&self, adapter_name: &str, event: &Event) -> bool {
+        let adapter = {
+            let adapters = self.adapters.lock().unwrap();
+            adapters
+                .iter()
+                .find(|entry| entry.plugin_name == adapter_name)
+                .map(|entry| entry.adapter.clone())
+        };
+        let Some(adapter) = adapter else {
+            return false;
+        };
+        if let Err(e) = adapter.send(event) {
+            self.logger
+                .error(adapter_name, &format!("send failed: {:#}", e));
+        }
+        true
+    }
+
     fn run_hooks(&self, phase: HookPhase, event: &mut Event) {
         let cmd_name = event.command.as_ref().map(|c| c.cmd.as_str());
         let hooks: Vec<Arc<dyn Hook>> = {
@@ -358,6 +377,12 @@ impl BotContext for Bot {
     }
 
     fn emit_event(&self, mut event: Event) {
+        if let Some(receiver) = &event.receiver
+            && self.send_to_adapter(receiver, &event)
+        {
+            return;
+        }
+
         // Every event goes through the Main hook phase exactly once.
         self.run_hooks(HookPhase::Main, &mut event);
 

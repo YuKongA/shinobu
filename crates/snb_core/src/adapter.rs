@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::context::BotContext;
+use crate::event::Event;
 
 /// A plugin component that continuously receives external events, running on
 /// a dedicated OS thread spawned by the bot.
@@ -26,6 +27,15 @@ use crate::context::BotContext;
 /// ```
 pub trait Adapter: Send + Sync {
     fn run(&self, bot: Arc<dyn BotContext>);
+
+    /// Send an outgoing event through this adapter.
+    ///
+    /// Adapters that support platform output should inspect the event's message
+    /// content and deliver supported items (text, files, images, etc.). The
+    /// default implementation keeps existing receive-only adapters working.
+    fn send(&self, _event: &Event) -> anyhow::Result<()> {
+        anyhow::bail!("adapter does not support outgoing messages")
+    }
 }
 
 /// Run an async closure as an adapter body, creating a dedicated single-threaded

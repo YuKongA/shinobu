@@ -1,5 +1,9 @@
 use std::process::Command;
-use std::sync::Once;
+use std::sync::{Arc, Mutex, Once};
+
+use snb_core::adapter::Adapter;
+use snb_core::context::BotContext;
+use snb_core::event::{ContentItem, Event, FileSource};
 
 static BUILD_LIB: Once = Once::new();
 
@@ -195,4 +199,57 @@ fn test_write_config_ownership() {
         .write_config("plugin_a", Path::new("../../etc/passwd"), "root:x:0:0")
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+}
+
+#[derive(Default)]
+struct CaptureAdapter {
+    sent: Mutex<Vec<Event>>,
+}
+
+impl Adapter for CaptureAdapter {
+    fn run(&self, _bot: Arc<dyn BotContext>) {}
+
+    fn send(&self, event: &Event) -> anyhow::Result<()> {
+        self.sent.lock().unwrap().push(event.clone());
+        Ok(())
+    }
+}
+
+#[test]
+fn test_send_file_to_adapter() {
+    use snb_core::bot::BotInfo;
+    use snb_runtime::bot::Bot;
+    use snb_runtime::logger::StdoutLogger;
+
+    let adapter = Arc::new(CaptureAdapter::default());
+    let bot = Bot::new(
+        BotInfo {
+            name: "TestBot".into(),
+        },
+        Arc::new(StdoutLogger::new(log::LevelFilter::Info)),
+        std::env::current_dir().unwrap().join("configs"),
+        std::env::current_dir().unwrap().join("data"),
+    );
+
+    bot.register_adapter("capture", adapter.clone());
+    bot.emit_event(
+        Event::file_message(
+            "test",
+            FileSource::Path("report.txt".to_string()),
+            Some("report.txt".to_string()),
+        )
+        .with_receiver("capture"),
+    );
+
+    let sent = adapter.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    let message = sent[0].message.as_ref().unwrap();
+    assert!(matches!(
+        &message.content[0],
+        ContentItem::File {
+            source: FileSource::Path(path),
+            file_name: Some(name),
+            ..
+        } if path == "report.txt" && name == "report.txt"
+    ));
 }

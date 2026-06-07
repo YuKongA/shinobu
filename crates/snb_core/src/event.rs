@@ -176,6 +176,35 @@ impl Event {
         }
     }
 
+    /// Build an [`EventType::Message`] event with a file content item.
+    pub fn file_message(
+        source: impl Into<String>,
+        file: FileSource,
+        file_name: Option<String>,
+    ) -> Self {
+        Self {
+            event_type: EventType::Message,
+            source: source.into(),
+            data: String::new(),
+            command: None,
+            message: Some(Message {
+                id: None,
+                reply_to: None,
+                content: vec![ContentItem::File {
+                    source: file,
+                    file_name,
+                    file_id: None,
+                }],
+                from: None,
+                to: None,
+                at: Vec::new(),
+                chat_type: None,
+            }),
+            sender: None,
+            receiver: None,
+        }
+    }
+
     /// Build a typed event with no structured payload (plugin lifecycle,
     /// `Other`, etc.). `data` carries free-form context such as a plugin
     /// name.
