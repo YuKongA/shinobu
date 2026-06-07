@@ -3,25 +3,25 @@ use std::sync::Arc;
 
 use snb_core::bot::BotInfo;
 use snb_core::context::{self, BotContext};
-use snb_core::logger::{LogLevel, Logger};
+use snb_core::logger::Logger;
 use snb_runtime::bot::Bot;
 use snb_runtime::logger::StdoutLogger;
 use snb_runtime::plugin_manager::PluginLoader;
 
 /// Load the log level from `configs/bot.toml`, defaulting to `Info`.
-fn load_log_level(config_dir: &Path) -> LogLevel {
+fn load_log_level(config_dir: &Path) -> log::LevelFilter {
     let path = config_dir.join("bot.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
-        return LogLevel::Info;
+        return log::LevelFilter::Info;
     };
     let Ok(table) = toml::from_str::<toml::Table>(&text) else {
-        return LogLevel::Info;
+        return log::LevelFilter::Info;
     };
     table
         .get("log_level")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse().ok())
-        .unwrap_or(LogLevel::Info)
+        .unwrap_or(log::LevelFilter::Info)
 }
 
 /// True for files that look like a Shinobu plugin shared library

@@ -493,6 +493,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libloading",
+ "log",
  "serde",
  "snb_core",
  "tempfile",

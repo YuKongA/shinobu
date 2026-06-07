@@ -26,7 +26,7 @@ fn test_plugin_load_and_commands() {
         BotInfo {
             name: "TestBot".into(),
         },
-        Arc::new(StdoutLogger::new(snb_core::logger::LogLevel::Info)),
+        Arc::new(StdoutLogger::new(log::LevelFilter::Info)),
         std::env::current_dir()
             .unwrap()
             .join("..")
@@ -118,7 +118,7 @@ fn test_load_config() {
         BotInfo {
             name: "TestBot".into(),
         },
-        Arc::new(StdoutLogger::new(snb_core::logger::LogLevel::Info)),
+        Arc::new(StdoutLogger::new(log::LevelFilter::Info)),
         config_dir,
         std::env::current_dir()
             .unwrap()
@@ -163,18 +163,18 @@ fn test_write_config_ownership() {
         BotInfo {
             name: "TestBot".into(),
         },
-        Arc::new(StdoutLogger::new(snb_core::logger::LogLevel::Info)),
+        Arc::new(StdoutLogger::new(log::LevelFilter::Info)),
         config_dir.to_path_buf(),
         data_dir,
     ));
 
-    // plugin_a writes its own config — should succeed
+    // plugin_a writes its own config; should succeed
     bot.write_config("plugin_a", Path::new("data.toml"), "[config]\nkey = \"a\"")
         .unwrap();
     let content = bot.load_config(Path::new("plugin_a/data.toml")).unwrap();
     assert_eq!(content, "[config]\nkey = \"a\"");
 
-    // plugin_a tries to write into plugin_b's namespace — should be blocked
+    // plugin_a tries to write into plugin_b's namespace; should be blocked
     let err = bot
         .write_config(
             "plugin_a",
@@ -190,7 +190,7 @@ fn test_write_config_ownership() {
         .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 
-    // Path traversal via .. — should be blocked
+    // Path traversal via ..; should be blocked
     let err = bot
         .write_config("plugin_a", Path::new("../../etc/passwd"), "root:x:0:0")
         .unwrap_err();
