@@ -24,6 +24,13 @@ fn load_log_level(config_dir: &Path) -> LogLevel {
         .unwrap_or(LogLevel::Info)
 }
 
+/// True for files that look like a Shinobu plugin shared library
+/// (e.g. `libsnb_adapter_stdin.so`, `snb_plugin_example.dll`).
+fn is_plugin_library(name: &str) -> bool {
+    (name.starts_with("libsnb_") || name.starts_with("snb_"))
+        && (name.ends_with(".so") || name.ends_with(".dylib") || name.ends_with(".dll"))
+}
+
 #[tokio::main]
 async fn main() {
     let cwd = std::env::current_dir().unwrap();
@@ -44,24 +51,42 @@ async fn main() {
 
     context::set_bot(bot.clone());
 
-    // Load adapters / plugins from target/debug
+    // Load adapters / plugins from two locations, in priority order:
+    //   1. the directory holding the executable (Cargo's target/<profile>)
+    //   2. ./plugins relative to the working directory (prebuilt drop-ins)
+    // A library found in (1) shadows a same-named file in (2); duplicate plugin
+    // or command names across *different* files are refused by the loader.
     let loader = PluginLoader::new(bot.clone());
-    let lib_dir = std::env::current_exe()
+    let exe_dir = std::env::current_exe()
         .unwrap()
         .parent()
         .unwrap()
         .to_path_buf();
+    let plugins_dir = cwd.join("plugins");
 
-    for entry in std::fs::read_dir(&lib_dir).unwrap().flatten() {
-        let path = entry.path();
-        let name = path.file_name().unwrap().to_str().unwrap();
-        // Match adapter .so/.dylib files (e.g. libsnb_adapter_stdin.so)
-        if (name.starts_with("libsnb_") || name.starts_with("snb_"))
-            && (name.ends_with(".so") || name.ends_with(".dylib") || name.ends_with(".dll"))
-        {
+    let mut seen_files = std::collections::HashSet::new();
+    for dir in [exe_dir, plugins_dir] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !is_plugin_library(name) {
+                continue;
+            }
+            if !seen_files.insert(name.to_string()) {
+                log::info!("skip {name}: shadowed by higher-priority copy");
+                continue;
+            }
             match loader.load_plugin(path.clone()) {
-                Ok(_) => log::info!("loaded {}", name),
-                Err(e) => log::info!("skip {}: {}", name, e),
+                Ok(_) => log::info!("loaded {name}"),
+                Err(e) => log::warn!("skip {name}: {e}"),
             }
         }
     }

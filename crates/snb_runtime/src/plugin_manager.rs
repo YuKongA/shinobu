@@ -58,7 +58,39 @@ impl PluginLoader {
             return Err(PluginError::BrokenAbi)?;
         }
 
+        // Refuse a duplicate plugin name before running `on_load`, so a
+        // shadowed plugin never touches the registry.
+        let name = cell.name().to_string();
+        if self.bot.get_plugin(&name).is_some() {
+            self.bot.logger().error(
+                "PluginLoader",
+                &format!("plugin '{name}' is already loaded; refusing duplicate"),
+            );
+            return Err(PluginError::DuplicatePlugin)?;
+        }
+
+        // Bracket `on_load` so component registrations that hit a name clash are
+        // recorded rather than silently overwriting another plugin's entries.
+        self.bot.begin_plugin_load();
         cell.on_load(self.bot.clone());
+        let conflicts = self.bot.take_plugin_load_conflicts();
+        if !conflicts.is_empty() {
+            self.bot.logger().error(
+                "PluginLoader",
+                &format!(
+                    "refusing plugin '{name}': {} name conflict(s): {}",
+                    conflicts.len(),
+                    conflicts.join("; ")
+                ),
+            );
+            // Tear down anything this plugin managed to register before the
+            // clash, then drop the cell (destroy_plugin → dlclose) — in that
+            // order, so no Arc outlives the dylib it points into.
+            cell.on_unload();
+            self.bot.rollback_plugin_components(&name);
+            return Err(PluginError::ComponentConflict)?;
+        }
+
         self.bot.register_plugin(cell);
         Ok(())
     }

@@ -74,6 +74,12 @@ pub struct Bot {
     adapters: Mutex<Vec<AdapterEntry>>,
     databases: RwLock<HashMap<String, DatabaseDriverEntry>>,
     session_manager: Arc<dyn SessionManager>,
+    /// Name conflicts recorded while a plugin's `on_load` runs. The plugin
+    /// loader brackets `on_load` with [`Bot::begin_plugin_load`] /
+    /// [`Bot::take_plugin_load_conflicts`] to learn whether the plugin tried to
+    /// register a component whose name was already taken, and rolls it back if
+    /// so. Plugins load sequentially, so a single buffer is sufficient.
+    load_conflicts: Mutex<Vec<String>>,
 }
 
 impl Bot {
@@ -100,7 +106,66 @@ impl Bot {
                 100,
                 std::time::Duration::from_secs(1800),
             )),
+            load_conflicts: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Reset the per-load conflict buffer. The plugin loader calls this right
+    /// before invoking a plugin's `on_load`.
+    pub fn begin_plugin_load(&self) {
+        self.load_conflicts.lock().unwrap().clear();
+    }
+
+    /// Drain and return any name conflicts recorded since the last
+    /// [`begin_plugin_load`](Self::begin_plugin_load). A non-empty result means
+    /// the plugin must be rejected.
+    pub fn take_plugin_load_conflicts(&self) -> Vec<String> {
+        std::mem::take(&mut *self.load_conflicts.lock().unwrap())
+    }
+
+    /// Remove every component registered under `plugin_name` without touching a
+    /// plugin cell. Used by the loader to roll back a plugin that hit a name
+    /// conflict mid-`on_load` (the cell is dropped separately by the caller).
+    pub fn rollback_plugin_components(&self, plugin_name: &str) {
+        self.remove_plugin_components(plugin_name);
+    }
+
+    /// Drop every command, hook, message handler, adapter, and database driver
+    /// registered under `plugin_name`. Shared by [`unregister_plugin`] (full
+    /// teardown) and conflict rollback.
+    fn remove_plugin_components(&self, plugin_name: &str) {
+        let removed_canonicals: Vec<String> = {
+            let mut cmds = self.commands.write().unwrap();
+            let to_remove: Vec<String> = cmds
+                .iter()
+                .filter(|(_, e)| e.plugin_name == plugin_name)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for k in &to_remove {
+                cmds.remove(k);
+            }
+            to_remove
+        };
+        if !removed_canonicals.is_empty() {
+            self.aliases
+                .write()
+                .unwrap()
+                .retain(|_, canonical| !removed_canonicals.contains(canonical));
+        }
+
+        self.hooks
+            .write()
+            .unwrap()
+            .retain(|e| e.plugin_name != plugin_name);
+        self.message_handlers
+            .write()
+            .unwrap()
+            .retain(|e| e.plugin_name != plugin_name);
+        self.adapters
+            .lock()
+            .unwrap()
+            .retain(|e| e.plugin_name != plugin_name);
+        self.databases.write().unwrap().remove(plugin_name);
     }
 
     /// Resolve `relative_path` under `config_dir` and ensure it stays inside.
@@ -360,38 +425,7 @@ impl BotContext for Bot {
         cell.on_unload();
 
         // Drop everything that points into the dylib's vtables.
-        let removed_canonicals: Vec<String> = {
-            let mut cmds = self.commands.write().unwrap();
-            let to_remove: Vec<String> = cmds
-                .iter()
-                .filter(|(_, e)| e.plugin_name == name)
-                .map(|(k, _)| k.clone())
-                .collect();
-            for k in &to_remove {
-                cmds.remove(k);
-            }
-            to_remove
-        };
-        if !removed_canonicals.is_empty() {
-            self.aliases
-                .write()
-                .unwrap()
-                .retain(|_, canonical| !removed_canonicals.contains(canonical));
-        }
-
-        self.hooks
-            .write()
-            .unwrap()
-            .retain(|e| e.plugin_name != name);
-        self.message_handlers
-            .write()
-            .unwrap()
-            .retain(|e| e.plugin_name != name);
-        self.adapters
-            .lock()
-            .unwrap()
-            .retain(|e| e.plugin_name != name);
-        self.databases.write().unwrap().remove(name);
+        self.remove_plugin_components(name);
 
         self.plugin_infos.write().unwrap().remove(name);
 
@@ -410,28 +444,75 @@ impl BotContext for Bot {
     fn register_command(&self, plugin_name: &str, command: Arc<dyn CommandHandler>) {
         let cmd_name = command.name().to_string();
         let alias_list: Vec<String> = command.aliases().iter().map(|s| s.to_string()).collect();
-        self.logger
-            .info(plugin_name, &format!("registered command '{}'", cmd_name));
 
-        if !alias_list.is_empty() {
-            let mut aliases = self.aliases.write().unwrap();
-            for a in &alias_list {
-                aliases.insert(a.clone(), cmd_name.clone());
-            }
+        // Hold both locks (commands → aliases, the project-wide order) so the
+        // conflict check and the insert see a consistent view. Refuse — never
+        // overwrite — when a name is already taken, recording the conflict so
+        // the loader can roll the whole plugin back.
+        let mut cmds = self.commands.write().unwrap();
+        let mut aliases = self.aliases.write().unwrap();
+
+        let conflict = if let Some(existing) = cmds.get(&cmd_name) {
+            Some(format!(
+                "command '{}' already registered by plugin '{}'",
+                cmd_name, existing.plugin_name
+            ))
+        } else if aliases.contains_key(&cmd_name) {
+            Some(format!(
+                "command '{}' clashes with an existing alias",
+                cmd_name
+            ))
+        } else {
+            alias_list.iter().find_map(|a| {
+                if cmds.contains_key(a) {
+                    Some(format!("alias '{}' clashes with an existing command", a))
+                } else if aliases.contains_key(a) {
+                    Some(format!("alias '{}' is already registered", a))
+                } else {
+                    None
+                }
+            })
+        };
+
+        if let Some(msg) = conflict {
+            drop(cmds);
+            drop(aliases);
+            self.logger.error(plugin_name, &msg);
+            self.load_conflicts.lock().unwrap().push(msg);
+            return;
         }
-        self.commands.write().unwrap().insert(
-            cmd_name,
+
+        for a in &alias_list {
+            aliases.insert(a.clone(), cmd_name.clone());
+        }
+        cmds.insert(
+            cmd_name.clone(),
             CommandEntry {
                 plugin_name: plugin_name.to_string(),
                 command,
             },
         );
+        drop(cmds);
+        drop(aliases);
+        self.logger
+            .info(plugin_name, &format!("registered command '{}'", cmd_name));
     }
 
     fn register_hook(&self, plugin_name: &str, hook: Arc<dyn Hook>) {
+        let mut hooks = self.hooks.write().unwrap();
+        if let Some(existing) = hooks.iter().find(|e| e.hook.name() == hook.name()) {
+            let msg = format!(
+                "hook '{}' already registered by plugin '{}'",
+                hook.name(),
+                existing.plugin_name
+            );
+            drop(hooks);
+            self.logger.error(plugin_name, &msg);
+            self.load_conflicts.lock().unwrap().push(msg);
+            return;
+        }
         self.logger
             .info(plugin_name, &format!("registered hook '{}'", hook.name()));
-        let mut hooks = self.hooks.write().unwrap();
         hooks.push(HookEntry {
             plugin_name: plugin_name.to_string(),
             hook,
@@ -448,11 +529,22 @@ impl BotContext for Bot {
     }
 
     fn register_message_handler(&self, plugin_name: &str, handler: Arc<dyn MessageHandler>) {
+        let mut handlers = self.message_handlers.write().unwrap();
+        if let Some(existing) = handlers.iter().find(|e| e.handler.name() == handler.name()) {
+            let msg = format!(
+                "message handler '{}' already registered by plugin '{}'",
+                handler.name(),
+                existing.plugin_name
+            );
+            drop(handlers);
+            self.logger.error(plugin_name, &msg);
+            self.load_conflicts.lock().unwrap().push(msg);
+            return;
+        }
         self.logger.info(
             plugin_name,
             &format!("registered message handler '{}'", handler.name()),
         );
-        let mut handlers = self.message_handlers.write().unwrap();
         handlers.push(MessageHandlerEntry {
             plugin_name: plugin_name.to_string(),
             handler,

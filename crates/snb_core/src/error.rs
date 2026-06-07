@@ -16,6 +16,11 @@ pub enum PluginError {
     BrokenAbi,
     /// The plugin's ABI major version is incompatible with the host.
     UnsupportedAbi,
+    /// A plugin with the same name is already loaded.
+    DuplicatePlugin,
+    /// The plugin registered a component (command, hook, …) whose name is
+    /// already taken by another plugin.
+    ComponentConflict,
 }
 
 impl Display for PluginError {
@@ -26,6 +31,8 @@ impl Display for PluginError {
             Self::InvalidPlugin => write!(f, "invalid plugin"),
             Self::BrokenAbi => write!(f, "broken plugin ABI"),
             Self::UnsupportedAbi => write!(f, "unsupported plugin ABI"),
+            Self::DuplicatePlugin => write!(f, "a plugin with this name is already loaded"),
+            Self::ComponentConflict => write!(f, "plugin component name conflict"),
         }
     }
 }
