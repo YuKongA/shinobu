@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, Mutex, Once};
 
@@ -25,6 +26,14 @@ fn init_test_logger() {
             .is_test(true)
             .try_init();
     });
+}
+
+struct TestFileCleanup(PathBuf);
+
+impl Drop for TestFileCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 #[test]
@@ -132,6 +141,22 @@ fn test_load_config() {
         .join("..")
         .join("..")
         .join("configs");
+
+    // Create test.toml temporarily
+    let test_config_path = config_dir.join("test.toml");
+    let test_config_content = r#"[example]
+key = "value"
+count = 42
+
+[example.nested]
+enabled = true
+tags = ["a", "b", "c"]
+"#;
+    std::fs::write(&test_config_path, test_config_content).unwrap();
+
+    // Ensure cleanup on test exit
+    let _cleanup = TestFileCleanup(test_config_path.clone());
+
     let bot = Arc::new(Bot::new(
         BotInfo {
             name: "TestBot".into(),
