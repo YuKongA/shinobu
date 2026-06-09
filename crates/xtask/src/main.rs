@@ -57,6 +57,10 @@ fn main() {
 
     let extra_args: Vec<OsString> = args.collect();
     let root = workspace_root();
+    let current_dir = env::current_dir().unwrap_or_else(|error| {
+        eprintln!("failed to read current directory: {error}");
+        process::exit(1);
+    });
 
     let result = match command_str.as_ref() {
         "build-example" => build_example(&root, &extra_args),
@@ -65,11 +69,16 @@ fn main() {
         "list-plugins" | "ls" => list_plugins(&root),
         "clean" => clean_generated(&root),
         "build-plugin" => {
-            let Some(plugin) = extra_args.first() else {
-                eprintln!("usage: cargo xtask build-plugin <plugin-dir> [cargo build args...]");
-                process::exit(2);
-            };
-            build_named_plugin(&root, plugin, &extra_args[1..])
+            if extra_args.first().is_some_and(is_help_arg) {
+                println!("{}", usage());
+                process::exit(0);
+            }
+
+            let (plugin, cargo_args) = split_build_plugin_args(&extra_args);
+            match plugin {
+                Some(plugin) => build_named_plugin(&root, &current_dir, plugin, cargo_args),
+                None => build_current_plugin(&root, &current_dir, cargo_args),
+            }
         }
         _ => {
             eprintln!("unknown command: {command_str}\n");
@@ -156,11 +165,47 @@ fn build_all(root: &Path, extra_args: &[OsString]) -> Result<(), String> {
 
 fn build_named_plugin(
     root: &Path,
+    current_dir: &Path,
     plugin: &OsString,
     extra_args: &[OsString],
 ) -> Result<(), String> {
-    let plugin = resolve_plugin(root, plugin)?;
+    let plugin = resolve_plugin(root, current_dir, plugin)?;
     cargo_build_lib(root, &plugin, extra_args)
+}
+
+fn build_current_plugin(
+    root: &Path,
+    current_dir: &Path,
+    extra_args: &[OsString],
+) -> Result<(), String> {
+    let plugin_dir = find_current_plugin_dir(root, current_dir).ok_or_else(|| {
+        format!(
+            "no plugin specified and current directory is not a plugin: {}\nrun from a plugin directory or pass a plugin name/path",
+            current_dir.display()
+        )
+    })?;
+    let plugin = plugin_in_dir(root, &plugin_dir)?.ok_or_else(|| {
+        format!(
+            "current directory does not contain a plugin manifest: {}",
+            plugin_dir.display()
+        )
+    })?;
+    cargo_build_lib(root, &plugin, extra_args)
+}
+
+fn split_build_plugin_args(args: &[OsString]) -> (Option<&OsString>, &[OsString]) {
+    match args.first() {
+        Some(first) if !looks_like_cargo_build_arg(first) => (Some(first), &args[1..]),
+        _ => (None, args),
+    }
+}
+
+fn looks_like_cargo_build_arg(arg: &OsString) -> bool {
+    arg.to_string_lossy().starts_with('-')
+}
+
+fn is_help_arg(arg: &OsString) -> bool {
+    matches!(arg.to_string_lossy().as_ref(), "-h" | "--help" | "help")
 }
 
 fn list_plugins(root: &Path) -> Result<(), String> {
@@ -438,10 +483,14 @@ fn manifest_plugin_name(root: &Path, manifest: &Path) -> String {
         .to_string()
 }
 
-fn resolve_plugin(root: &Path, plugin: &OsString) -> Result<PluginBuild, String> {
+fn resolve_plugin(
+    root: &Path,
+    current_dir: &Path,
+    plugin: &OsString,
+) -> Result<PluginBuild, String> {
     let plugin_path = PathBuf::from(plugin);
     if plugin_path.ends_with("Cargo.toml") {
-        let manifest = absolutize(root, plugin_path);
+        let manifest = resolve_user_path(root, current_dir, &plugin_path);
         if manifest.is_file() {
             return Ok(PluginBuild {
                 name: manifest_plugin_name(root, &manifest),
@@ -452,8 +501,8 @@ fn resolve_plugin(root: &Path, plugin: &OsString) -> Result<PluginBuild, String>
         return Err(format!("plugin manifest not found: {}", manifest.display()));
     }
 
-    let plugin_dir = if plugin_path.components().count() > 1 {
-        absolutize(root, plugin_path)
+    let plugin_dir = if is_path_like(&plugin_path) {
+        resolve_user_path(root, current_dir, &plugin_path)
     } else {
         root.join("plugins").join(&plugin_path)
     };
@@ -479,6 +528,52 @@ fn resolve_plugin(root: &Path, plugin: &OsString) -> Result<PluginBuild, String>
         [] => Err(format!("plugin manifest not found for '{plugin_name}'")),
         _ => Err(format!("plugin name '{plugin_name}' is ambiguous")),
     }
+}
+
+fn resolve_user_path(root: &Path, current_dir: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    let current_relative = current_dir.join(path);
+    if current_relative.exists() {
+        current_relative
+    } else {
+        root.join(path)
+    }
+}
+
+fn is_path_like(path: &Path) -> bool {
+    path.is_absolute()
+        || path.components().count() > 1
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::CurDir
+                    | Component::ParentDir
+                    | Component::RootDir
+                    | Component::Prefix(_)
+            )
+        })
+}
+
+fn find_current_plugin_dir(root: &Path, current_dir: &Path) -> Option<PathBuf> {
+    let plugins_root = root.join("plugins");
+    let mut dir = current_dir.to_path_buf();
+
+    loop {
+        if dir.starts_with(&plugins_root) && has_plugin_manifest(&dir) {
+            return Some(dir);
+        }
+
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+fn has_plugin_manifest(dir: &Path) -> bool {
+    dir.join(SNB_MANIFEST).is_file() || dir.join("Cargo.toml").is_file()
 }
 
 fn plugin_name_matches(dir_name: &str, requested: &str) -> bool {
@@ -813,13 +908,15 @@ fn usage() -> &'static str {
   \x1b[32mbuild-example\x1b[0m          Build example plugins only
   \x1b[32mbuild-plugins\x1b[0m          Build non-example plugins only
   \x1b[32mbuild-all\x1b[0m              Build workspace and all plugins
-  \x1b[32mbuild-plugin\x1b[0m <name>    Build a specific plugin by name
+  \x1b[32mbuild-plugin\x1b[0m [name]    Build a plugin by name/path, or the current plugin
   \x1b[32mlist-plugins\x1b[0m, \x1b[32mls\x1b[0m      List all available plugins
   \x1b[32mclean\x1b[0m                  Clean generated plugin manifests
   \x1b[32mhelp\x1b[0m, \x1b[32m--help\x1b[0m, \x1b[32m-h\x1b[0m     Show this help message
 
 \x1b[1mEXAMPLES:\x1b[0m
   cargo xtask list-plugins
+  cargo xtask build-plugin
+  cargo xtask build-plugin .
   cargo xtask build-plugin payload_extract_bot
   cargo xtask build-plugin tg --release
   cargo xtask build-all
@@ -836,4 +933,65 @@ fn usage() -> &'static str {
 fn print_usage_and_exit() -> ! {
     eprintln!("{}", usage());
     process::exit(2);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_build_plugin_args_keeps_named_plugin() {
+        let args = vec![
+            OsString::from("snb_plugin_example"),
+            OsString::from("--release"),
+        ];
+        let (plugin, cargo_args) = split_build_plugin_args(&args);
+
+        assert_eq!(plugin, Some(&args[0]));
+        assert_eq!(cargo_args, &args[1..]);
+    }
+
+    #[test]
+    fn split_build_plugin_args_treats_leading_flag_as_cargo_args() {
+        let args = vec![OsString::from("--release")];
+        let (plugin, cargo_args) = split_build_plugin_args(&args);
+
+        assert_eq!(plugin, None);
+        assert_eq!(cargo_args, &args[..]);
+    }
+
+    #[test]
+    fn resolve_plugin_dot_relative_to_current_plugin_dir() {
+        let root = workspace_root();
+        let current_dir = root.join("plugins").join("snb_plugin_example");
+
+        let plugin = resolve_plugin(&root, &current_dir, &OsString::from(".")).unwrap();
+
+        assert_eq!(plugin.name, "snb_plugin_example");
+    }
+
+    #[test]
+    fn resolve_plugin_uses_root_relative_path_as_fallback() {
+        let root = workspace_root();
+        let current_dir = root.join("crates").join("xtask");
+
+        let plugin = resolve_plugin(
+            &root,
+            &current_dir,
+            &OsString::from("plugins/snb_plugin_example"),
+        )
+        .unwrap();
+
+        assert_eq!(plugin.name, "snb_plugin_example");
+    }
+
+    #[test]
+    fn find_current_plugin_dir_walks_up_from_plugin_subdir() {
+        let root = workspace_root();
+        let current_dir = root.join("plugins").join("snb_plugin_example").join("src");
+
+        let plugin_dir = find_current_plugin_dir(&root, &current_dir).unwrap();
+
+        assert_eq!(plugin_dir, root.join("plugins").join("snb_plugin_example"));
+    }
 }
