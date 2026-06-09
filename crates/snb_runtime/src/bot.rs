@@ -18,6 +18,7 @@ use snb_core::logger::Logger;
 use snb_core::message_handler::MessageHandler;
 use snb_core::plugin::{PluginCell, PluginInfo, SnbPlugin, Version, snb_plugin_abi};
 use snb_core::session::SessionManager;
+use snb_status::{BotStatus, UptimeClock};
 
 struct CommandEntry {
     plugin_name: String,
@@ -65,6 +66,7 @@ enum HookPhase {
 /// and shared as `Arc<Bot>`.
 pub struct Bot {
     pub bot_info: BotInfo,
+    status_clock: UptimeClock,
     logger: Arc<dyn Logger>,
     config_dir: PathBuf,
     data_root: PathBuf,
@@ -95,6 +97,7 @@ impl Bot {
     ) -> Self {
         Self {
             bot_info,
+            status_clock: UptimeClock::started_now(),
             logger,
             config_dir,
             data_root,
@@ -125,6 +128,12 @@ impl Bot {
     /// the plugin must be rejected.
     pub fn take_plugin_load_conflicts(&self) -> Vec<String> {
         std::mem::take(&mut *self.load_conflicts.lock().unwrap())
+    }
+
+    /// Return a point-in-time snapshot of the runtime status.
+    pub fn status(&self) -> BotStatus {
+        let plugin_count = self.plugin_infos.read().unwrap().len();
+        self.status_clock.collect_status(plugin_count)
     }
 
     /// Remove every component registered under `plugin_name` without touching a
@@ -362,6 +371,10 @@ impl BotContext for Bot {
 
     fn get_me(&self) -> BotInfo {
         self.bot_info.clone()
+    }
+
+    fn status(&self) -> BotStatus {
+        Bot::status(self)
     }
 
     fn get_plugin(&self, name: &str) -> Option<PluginInfo> {

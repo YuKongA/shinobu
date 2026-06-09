@@ -508,6 +508,7 @@ dependencies = [
  "anyhow",
  "inventory",
  "log",
+ "snb_status",
  "tokio",
  "toml",
 ]
@@ -553,8 +554,13 @@ dependencies = [
  "log",
  "serde",
  "snb_core",
+ "snb_status",
  "toml",
 ]
+
+[[package]]
+name = "snb_status"
+version = "0.1.3"
 
 [[package]]
 name = "sqlite-wasm-rs"

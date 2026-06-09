@@ -12,6 +12,7 @@ use crate::logger::Logger;
 use crate::message_handler::MessageHandler;
 use crate::plugin::{PluginCell, PluginInfo};
 use crate::session::SessionManager;
+use crate::status::BotStatus;
 
 // -- Global bot context -------------------------------------------------------
 
@@ -67,6 +68,9 @@ pub trait BotContext: Send + Sync {
     // -- Bot identity --
 
     fn get_me(&self) -> BotInfo;
+
+    /// Return a point-in-time snapshot of the bot's runtime status.
+    fn status(&self) -> BotStatus;
 
     // -- Event dispatch --
 

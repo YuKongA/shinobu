@@ -10,6 +10,7 @@ default-members = [
     "crates/snb_core",
     "crates/snb_macros",
     "crates/snb_runtime",
+    "crates/snb_status",
 ]
 resolver = "2"
 
@@ -30,6 +31,7 @@ abi_version = "0.2.0"
 snb_core = { path = "crates/snb_core" }
 snb_macros = { path = "crates/snb_macros" }
 snb_runtime = { path = "crates/snb_runtime" }
+snb_status = { path = "crates/snb_status" }
 
 anyhow = "1"
 log = "0"

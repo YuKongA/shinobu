@@ -108,6 +108,13 @@ fn test_plugin_load_and_commands() {
         }
     );
 
+    let status = bot.status();
+    assert_eq!(status.plugin_count, 1);
+    assert_eq!(status.platform.os, std::env::consts::OS);
+    assert_eq!(status.platform.arch, std::env::consts::ARCH);
+    let ctx: Arc<dyn BotContext> = bot.clone();
+    assert_eq!(ctx.status().plugin_count, 1);
+
     loader.unload_plugin("MyPlugin").unwrap();
 }
 
@@ -177,7 +184,9 @@ tags = ["a", "b", "c"]
     ));
 
     // Deserialize from config text
-    let text = bot.load_config("test_load_config_plugin", Path::new("test.toml")).unwrap();
+    let text = bot
+        .load_config("test_load_config_plugin", Path::new("test.toml"))
+        .unwrap();
     let config: TestConfig = toml::from_str(&text).unwrap();
 
     assert_eq!(config.example.key, "value");
@@ -191,7 +200,9 @@ tags = ["a", "b", "c"]
     assert_eq!(config, roundtripped);
 
     // Non-existent file
-    let err = bot.load_config("test_load_config_plugin", Path::new("no_such_file.toml")).unwrap_err();
+    let err = bot
+        .load_config("test_load_config_plugin", Path::new("no_such_file.toml"))
+        .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
 }
 

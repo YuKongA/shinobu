@@ -14,6 +14,7 @@ anyhow = { workspace = true }
 libloading = "0"
 log = { workspace = true }
 snb_core = { workspace = true }
+snb_status = { workspace = true }
 
 [dev-dependencies]
 env_logger = "0"
