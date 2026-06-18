@@ -31,7 +31,7 @@ fn reply(src: &Event, text: impl Into<String>) -> Event {
 
 // -- Commands ----------------------------------------------------------------
 
-#[command(name = "echo", aliases = ["say"])]
+#[command(name = "echo", aliases = ["say"], description = "Echo back your message")]
 fn echo(ctx: &CommandContext) -> anyhow::Result<()> {
     let bot = snb_core::context::bot();
     let msg = ctx.event.message.as_ref();
@@ -63,7 +63,7 @@ fn echo(ctx: &CommandContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[command(name = "ping")]
+#[command(name = "ping", description = "Reply with pong")]
 fn ping(ctx: &CommandContext) -> anyhow::Result<()> {
     log::info!("[command] /ping source={}", ctx.event.source);
     snb_core::context::bot().emit_event(reply(ctx.event, "pong!"));
