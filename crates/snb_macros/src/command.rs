@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{Expr, Ident};
+use syn::{Expr, ExprLit, Ident, Lit};
 
 use crate::common::{MetaArgs, name_method, parse_fn};
 
@@ -37,6 +37,43 @@ fn try_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
         None => quote! {},
     };
 
+    let description_fn = match args.get("description") {
+        Some(Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        })) => quote! { fn description(&self) -> &str { #s } },
+        Some(other) => {
+            return Err(syn::Error::new_spanned(
+                other,
+                "`description` must be a string literal, e.g. description = \"...\"",
+            ));
+        }
+        None => quote! {},
+    };
+
+    let visibility_fn = match args.get("visibility") {
+        Some(Expr::Path(path)) => {
+            let variant = path
+                .path
+                .segments
+                .last()
+                .ok_or_else(|| syn::Error::new_spanned(path, "empty `visibility` path"))?
+                .ident
+                .clone();
+            quote! {
+                fn visibility(&self) -> ::snb_core::command::CommandVisibility {
+                    ::snb_core::command::CommandVisibility::#variant
+                }
+            }
+        }
+        Some(other) => {
+            return Err(syn::Error::new_spanned(
+                other,
+                "`visibility` must be one of Public, Admin, Hidden",
+            ));
+        }
+        None => quote! {},
+    };
+
     let ty = Ident::new(&format!("__SnbCommand_{fn_name}"), Span::call_site());
 
     Ok(quote! {
@@ -49,6 +86,8 @@ fn try_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
         impl ::snb_core::command::CommandHandler for #ty {
             #name_fn
             #aliases_fn
+            #description_fn
+            #visibility_fn
             fn execute(&self, ctx: &::snb_core::command::CommandContext) -> ::anyhow::Result<()> {
                 #fn_name(ctx)
             }
