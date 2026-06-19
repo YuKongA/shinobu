@@ -20,11 +20,11 @@ fn reply(src: &Event, text: impl Into<String>) -> Event {
     let mut resp = Event::message("MyPlugin", text);
     if let Some(m) = &src.message {
         let out = resp.message.as_mut().unwrap();
-        out.to = m.to.clone();
+        out.chat = m.chat.clone();
         out.reply_to = m.id.clone();
     }
-    if let Some(sender) = &src.sender {
-        resp.receiver = Some(sender.clone());
+    if let Some(plugin) = &src.reply_plugin {
+        resp.target_plugin = Some(plugin.clone());
     }
     resp
 }
@@ -39,8 +39,8 @@ fn echo(ctx: &CommandContext) -> anyhow::Result<()> {
     // No args → enter session "echo" mode, wait for next message.
     if ctx.args.is_empty() {
         if let (Some(chat_id), Some(user_id)) = (
-            msg.and_then(|m| m.to.as_deref()),
-            msg.and_then(|m| m.from.as_deref()),
+            msg.map(|m| m.chat_id()),
+            msg.and_then(|m| m.sender_id()),
         ) {
             let key = SessionKey::private(chat_id, user_id);
             let sm = bot.get_session_manager();
@@ -53,11 +53,11 @@ fn echo(ctx: &CommandContext) -> anyhow::Result<()> {
 
     // Has args → echo directly.
     log::info!(
-        "[command] /echo args={:?} source={} from={:?} to={:?}",
+        "[command] /echo args={:?} source={} sender={:?} chat={:?}",
         ctx.args,
         ctx.event.source,
-        msg.and_then(|m| m.from.as_deref()),
-        msg.and_then(|m| m.to.as_deref()),
+        msg.and_then(|m| m.sender_id()),
+        msg.map(|m| m.chat_id()),
     );
     bot.emit_event(reply(ctx.event, ctx.args));
     Ok(())
@@ -80,8 +80,8 @@ fn echo_handler(event: &Event) -> anyhow::Result<()> {
     let text = msg.text();
 
     // Check if this user is in "echo" session mode.
-    if let (Some(chat_id), Some(user_id)) = (msg.to.as_deref(), msg.from.as_deref()) {
-        let key = SessionKey::private(chat_id, user_id);
+    if let Some(user_id) = msg.sender_id() {
+        let key = SessionKey::private(msg.chat_id(), user_id);
         let sm = snb_core::context::bot().get_session_manager();
         if sm.get_state(&key) == SessionState::WaitingForInput {
             let recent = sm.get_all_messages(&key);
@@ -98,12 +98,11 @@ fn echo_handler(event: &Event) -> anyhow::Result<()> {
     }
 
     log::info!(
-        "[message] text={:?} from={:?} to={:?} at={:?} chat_type={:?} is_admin={} source={}",
+        "[message] text={:?} sender={:?} chat={:?} at={:?} is_admin={} source={}",
         text,
-        msg.from,
-        msg.to,
+        msg.sender,
+        msg.chat,
         msg.at,
-        msg.chat_type,
         msg.is_admin,
         event.source,
     );
