@@ -65,15 +65,10 @@ use snb_core::event::{Event, Message};
 fn command_event(cmd: &str, is_admin: bool) -> Event {
     let mut event = Event::command("test", cmd, "");
     event.message = Some(Message {
-        id: None,
-        reply_to: None,
-        content: Vec::new(),
-        from: Some("1".to_string()),
-        to: Some("1".to_string()),
-        at: Vec::new(),
-        chat_type: None,
+        sender: Some(snb_core::event::Sender::new("1")),
+        chat: snb_core::event::Chat::new("1"),
         is_admin,
-        delete_after: None,
+        ..Default::default()
     });
     event
 }

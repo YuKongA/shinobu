@@ -573,8 +573,8 @@ impl BotContext for Bot {
     }
 
     fn emit_event(&self, mut event: Event) {
-        if let Some(receiver) = &event.receiver
-            && self.send_to_adapter(receiver, &event)
+        if let Some(target) = &event.target_plugin
+            && self.send_to_adapter(target, &event)
         {
             return;
         }
@@ -596,7 +596,7 @@ impl BotContext for Bot {
         // or panicking handler can't starve, deadlock, or poison the registry lock.
         let cells: Vec<Arc<PluginCell>> = {
             let plugins = self.plugins.read().unwrap();
-            match &event.receiver {
+            match &event.target_plugin {
                 Some(target) => plugins.get(target.as_str()).cloned().into_iter().collect(),
                 None => plugins.values().cloned().collect(),
             }

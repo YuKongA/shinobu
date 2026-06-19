@@ -305,7 +305,7 @@ fn test_send_file_to_adapter() {
             FileSource::Path("report.txt".to_string()),
             Some("report.txt".to_string()),
         )
-        .with_receiver("capture"),
+        .with_target_plugin("capture"),
     );
 
     let sent = adapter.sent.lock().unwrap();
