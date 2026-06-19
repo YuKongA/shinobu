@@ -5,9 +5,9 @@ fn stdin_message_defaults_to_admin() {
     let event = with_admin_context(Event::message("stdin", "hello"), "hello");
     let message = event.message.unwrap();
 
-    assert_eq!(message.from.as_deref(), Some("stdin"));
-    assert_eq!(message.to.as_deref(), Some("stdin"));
-    assert_eq!(message.chat_type, Some(ChatType::Private));
+    assert_eq!(message.sender_id(), Some("stdin"));
+    assert_eq!(message.chat_id(), "stdin");
+    assert_eq!(message.chat.kind, Some(ChatType::Private));
     assert!(message.is_admin);
 }
 

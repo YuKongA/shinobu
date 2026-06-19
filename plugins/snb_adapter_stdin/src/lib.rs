@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use snb_core::adapter::{Adapter, run_async};
 use snb_core::context::BotContext;
-use snb_core::event::{ChatType, ContentItem, Event, EventType, FileSource, Message};
+use snb_core::event::{Chat, ChatType, ContentItem, Event, EventType, FileSource, Message, Sender};
 use snb_macros::plugin;
 
 /// Set by [`Adapter::stop`]; the reader loop checks it. Module-level since the
@@ -49,27 +49,32 @@ async fn stdin_reader(bot: Arc<dyn BotContext>) {
         } else {
             Event::message("stdin", text.as_str())
         };
-        bot.emit_event(with_admin_context(event, &text).with_sender("stdin"));
+        bot.emit_event(with_admin_context(event, &text).with_reply_plugin("stdin"));
     }
 }
 
 fn with_admin_context(mut event: Event, text: &str) -> Event {
     if let Some(message) = event.message.as_mut() {
-        message.from.get_or_insert_with(|| "stdin".to_string());
-        message.to.get_or_insert_with(|| "stdin".to_string());
-        message.chat_type.get_or_insert(ChatType::Private);
+        message.sender.get_or_insert_with(|| Sender::new("stdin"));
+        if message.chat.id.is_empty() {
+            message.chat = Chat {
+                id: "stdin".to_string(),
+                kind: Some(ChatType::Private),
+                ..Default::default()
+            };
+        }
         message.is_admin = true;
     } else {
         event.message = Some(Message {
-            id: None,
-            reply_to: None,
             content: vec![ContentItem::text(text)],
-            from: Some("stdin".to_string()),
-            to: Some("stdin".to_string()),
-            at: Vec::new(),
-            chat_type: Some(ChatType::Private),
+            sender: Some(Sender::new("stdin")),
+            chat: Chat {
+                id: "stdin".to_string(),
+                kind: Some(ChatType::Private),
+                ..Default::default()
+            },
             is_admin: true,
-            delete_after: None,
+            ..Default::default()
         });
     }
     event
