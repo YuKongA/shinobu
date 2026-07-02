@@ -15,6 +15,16 @@
 //! `on_unload` and before the `Library` unmaps on the clean unload path (the
 //! leak path never `dlclose`s, so tasks are safe there too) — so plugin authors
 //! get this protection automatically, without a manual teardown call.
+//!
+//! Residual (accepted tradeoff): [`shutdown`] can only *cancel* tasks at their
+//! await points. A task doing genuinely blocking work (a CPU loop, a blocking
+//! syscall, a subprocess that never yields) is *detached* once
+//! [`SHUTDOWN_TIMEOUT`] elapses, and can then keep running cdylib code past
+//! `dlclose` — the very UAF this module prevents for async tasks. This is a
+//! deliberately weaker posture than the host drain (which leaks rather than
+//! unmap): it keeps unload from hanging. So keep spawned work async, and run
+//! any blocking step (e.g. a subprocess) on `tokio::task::spawn_blocking` and
+//! keep it short.
 
 use std::future::Future;
 use std::sync::RwLock;
@@ -87,6 +97,9 @@ where
 /// their next await and worker threads are joined, bounded by
 /// [`SHUTDOWN_TIMEOUT`] so unload can never hang. Idempotent and safe to call
 /// when no runtime was ever created (cheap no-op).
+///
+/// Host/macro use only — do NOT call from plugin code, and never from inside a
+/// spawned task (it would shut the runtime down from one of its own workers).
 pub fn shutdown() {
     SHUTTING_DOWN.store(true, Ordering::Release);
     let runtime = RUNTIME.write().unwrap().take();
