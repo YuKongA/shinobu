@@ -27,7 +27,7 @@
 //! keep it short.
 
 use std::future::Future;
-use std::sync::RwLock;
+use std::sync::{PoisonError, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -62,16 +62,20 @@ where
     if SHUTTING_DOWN.load(Ordering::Acquire) {
         return;
     }
-    // Fast path: runtime already built.
+    // Fast path: runtime already built. Tolerate a poisoned lock rather than
+    // `unwrap`-panicking: `shutdown` runs from the `extern "C"` `destroy_plugin`
+    // with no catch_unwind on the plugin side, so a panic here would abort the
+    // host. (Poisoning is effectively unreachable — nothing user-supplied runs
+    // under these guards — but the framework's rule is never abort the host.)
     {
-        let guard = RUNTIME.read().unwrap();
+        let guard = RUNTIME.read().unwrap_or_else(PoisonError::into_inner);
         if let Some(rt) = guard.as_ref() {
             rt.spawn(future);
             return;
         }
     }
     // Slow path: create it under the write lock (double-checked).
-    let mut guard = RUNTIME.write().unwrap();
+    let mut guard = RUNTIME.write().unwrap_or_else(PoisonError::into_inner);
     if SHUTTING_DOWN.load(Ordering::Acquire) {
         return;
     }
@@ -102,7 +106,9 @@ where
 /// spawned task (it would shut the runtime down from one of its own workers).
 pub fn shutdown() {
     SHUTTING_DOWN.store(true, Ordering::Release);
-    let runtime = RUNTIME.write().unwrap().take();
+    // Poison-tolerant (see `spawn`): this runs from `destroy_plugin`, where a
+    // panic would abort the host past any catch_unwind.
+    let runtime = RUNTIME.write().unwrap_or_else(PoisonError::into_inner).take();
     if let Some(runtime) = runtime {
         runtime.shutdown_timeout(SHUTDOWN_TIMEOUT);
     }
