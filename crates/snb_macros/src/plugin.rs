@@ -46,7 +46,11 @@ fn try_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> 
         }
         #[unsafe(no_mangle)]
         #[allow(clippy::not_unsafe_ptr_arg_deref)]
-        pub extern "C" fn destroy_plugin(ptr: *mut Box<dyn #krate::SnbPlugin>) {
+        pub extern "C" fn destroy_plugin(ptr: *mut Box<dyn #krate::SnbPlugin> ) {
+            // Drain this plugin's managed background tasks before the library
+            // unmaps — a task still running cdylib code past dlclose is a
+            // use-after-free. Runs after on_unload, before the Library drop.
+            ::snb_core::task::shutdown();
             if !ptr.is_null() {
                 unsafe { drop(Box::from_raw(ptr)); }
             }

@@ -22,6 +22,7 @@ pub mod message_handler;
 pub mod plugin;
 pub mod registry;
 pub mod session;
+pub mod task;
 
 pub mod status {
     pub use snb_status::*;

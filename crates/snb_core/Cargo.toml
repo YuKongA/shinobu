@@ -13,7 +13,7 @@ rust-version.workspace = true
 anyhow = { workspace = true }
 log = { workspace = true }
 snb_status = { workspace = true }
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 inventory = "0"
 
 [build-dependencies]
